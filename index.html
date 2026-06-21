@@ -1,0 +1,1350 @@
+<!DOCTYPE html>
+<html lang="en" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PaperMind - Agentic AI Research Assistant & Mind Mapper</title>
+    
+    <!-- Tailwind CSS (via CDN for styling) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- PDF.js for rendering and text extraction -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    
+    <!-- Marked.js for Markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            DEFAULT: '#B31B1B', // arXiv Red
+                            dark: '#8B1515',
+                            light: '#D94343'
+                        },
+                        darkbg: '#121212',
+                        darkpanel: '#1E1E1E',
+                        darkborder: '#333333'
+                    },
+                    fontFamily: {
+                        serif: ['"Times New Roman"', 'Times', 'serif'],
+                        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        /* Custom Scrollbars */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        .dark ::-webkit-scrollbar-thumb { background: #475569; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        /* Smooth Transitions */
+        body, main, aside, section, div, button { transition: background-color 0.3s ease, border-color 0.3s ease, color 0.3s ease; }
+        
+        /* Markdown Prose Styling */
+        .prose p { margin-bottom: 0.75rem; line-height: 1.6; }
+        .prose p:last-child { margin-bottom: 0; }
+        .prose h1, .prose h2, .prose h3 { font-weight: 600; margin-top: 1rem; margin-bottom: 0.5rem; color: inherit; }
+        .prose ul { list-style-type: disc; padding-left: 1.5rem; margin-bottom: 0.75rem; }
+        .prose ol { list-style-type: decimal; padding-left: 1.5rem; margin-bottom: 0.75rem; }
+        .prose strong { font-weight: 600; color: inherit; }
+        .prose pre { background: #f1f5f9; padding: 0.75rem; border-radius: 0.375rem; overflow-x: auto; margin-bottom: 0.75rem; border: 1px solid #e2e8f0; }
+        .dark .prose pre { background: #0f172a; border-color: #1e293b; color: #e2e8f0; }
+        .prose code { background: #f1f5f9; padding: 0.125rem 0.25rem; border-radius: 0.25rem; font-family: monospace; font-size: 0.875em; }
+        .dark .prose code { background: #1e293b; color: #cbd5e1; }
+        
+        /* Loading Indicator */
+        .typing-indicator span {
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            background-color: #B31B1B;
+            border-radius: 50%;
+            animation: bounce 1.4s infinite ease-in-out both;
+        }
+        .typing-indicator span:nth-child(1) { animation-delay: -0.32s; }
+        .typing-indicator span:nth-child(2) { animation-delay: -0.16s; }
+        @keyframes bounce { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1); } }
+
+        /* PDF Canvas Wrapper */
+        #pdf-canvas-container {
+            width: 100%;
+            height: 100%;
+            overflow: auto;
+            display: flex;
+            justify-content: center;
+            background-color: #e2e8f0;
+        }
+        .dark #pdf-canvas-container { background-color: #0f172a; }
+        canvas { max-width: 100%; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06); margin: auto; }
+
+        /* Toast Notifications */
+        #toast-container { position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%); z-index: 50; display: flex; flex-direction: column; gap: 0.5rem; }
+        .toast { padding: 0.75rem 1.5rem; border-radius: 9999px; color: white; font-size: 0.875rem; font-weight: 500; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); opacity: 0; transform: translateY(100%); animation: toast-in 0.3s forwards; }
+        .toast.hide { animation: toast-out 0.3s forwards; }
+        @keyframes toast-in { to { opacity: 1; transform: translateY(0); } }
+        @keyframes toast-out { to { opacity: 0; transform: translateY(100%); } }
+
+        /* Mind Map Styling */
+        #mindmap-container {
+            cursor: grab;
+            user-select: none;
+        }
+        #mindmap-container:active {
+            cursor: grabbing;
+        }
+        .mindmap-node {
+            transition: transform 0.2s, filter 0.2s;
+        }
+        .mindmap-node:hover {
+            filter: brightness(1.1) drop-shadow(0 4px 6px rgba(0,0,0,0.15));
+            transform: scale(1.02);
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 dark:bg-darkbg dark:text-gray-200 h-screen flex flex-col font-sans overflow-hidden transition-colors">
+
+    <!-- Toast Container -->
+    <div id="toast-container"></div>
+
+    <!-- Header -->
+    <header class="bg-white dark:bg-darkpanel border-b border-gray-200 dark:border-darkborder h-14 flex items-center justify-between px-4 shrink-0 shadow-sm z-20 transition-colors">
+        <div class="flex items-center gap-3">
+            <div class="bg-brand text-white p-1.5 rounded-md">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+            </div>
+            <div>
+                <h1 class="font-serif text-xl font-bold text-brand dark:text-brand-light leading-none">PaperMind</h1>
+                <span class="text-[10px] text-gray-500 dark:text-gray-400 font-medium tracking-wide uppercase">Agentic Research Environment</span>
+            </div>
+        </div>
+        
+        <div class="flex items-center gap-3">
+            <!-- Theme Toggle -->
+            <button id="theme-toggle" class="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400 transition-colors" title="Toggle Dark/Light Mode">
+                <svg id="icon-sun" class="hidden w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
+                <svg id="icon-moon" class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg>
+            </button>
+
+            <!-- API Connection -->
+            <div class="flex items-center bg-gray-100 dark:bg-black rounded-lg border border-gray-200 dark:border-darkborder px-2 py-1 focus-within:border-brand dark:focus-within:border-brand transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400 mx-1"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path></svg>
+                <input type="password" id="api-key-input" placeholder="Gemini API Key..." class="bg-transparent border-none outline-none text-sm w-48 text-gray-700 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 px-1">
+                <button id="connect-api-btn" class="text-xs bg-white dark:bg-darkpanel border border-gray-200 dark:border-darkborder text-gray-600 dark:text-gray-300 px-2 py-1 rounded hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors ml-1 font-medium">Connect</button>
+            </div>
+            
+            <div class="flex items-center gap-1.5 bg-gray-50 dark:bg-black border border-gray-200 dark:border-darkborder px-2.5 py-1.5 rounded-full" title="API Status">
+                <div id="api-indicator" class="w-2.5 h-2.5 rounded-full bg-red-500 shadow-[inset_0_1px_2px_rgba(0,0,0,0.3)] transition-colors duration-300"></div>
+                <span id="api-status-text" class="text-xs font-semibold text-gray-600 dark:text-gray-400 w-20 text-center">Disconnected</span>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Layout Grid -->
+    <main class="flex-1 flex overflow-hidden">
+        
+        <!-- LEFT PANEL: Document Management -->
+        <aside class="w-72 bg-white dark:bg-darkpanel border-r border-gray-200 dark:border-darkborder flex flex-col shrink-0 transition-colors z-10">
+            <!-- Upload & Search -->
+            <div class="p-4 border-b border-gray-200 dark:border-darkborder space-y-3">
+                <input type="file" id="file-upload" accept="application/pdf" multiple class="hidden">
+                <button id="upload-btn" class="w-full bg-brand hover:bg-brand-dark text-white text-sm font-medium py-2.5 px-4 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-sm">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                    Upload Papers (PDF)
+                </button>
+
+                <div class="relative">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="absolute left-2.5 top-2.5 text-gray-400"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                    <input type="text" id="doc-search" placeholder="Search papers..." class="w-full bg-gray-50 dark:bg-black border border-gray-200 dark:border-darkborder rounded-md pl-8 pr-3 py-1.5 text-sm text-gray-700 dark:text-gray-200 focus:outline-none focus:border-brand dark:focus:border-brand transition-colors">
+                </div>
+            </div>
+
+            <!-- Document List -->
+            <div class="flex-1 overflow-y-auto p-3" id="document-list">
+                <div class="flex flex-col items-center justify-center h-full text-center px-4 opacity-50" id="empty-docs-state">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="mb-3"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                    <p class="text-sm font-medium">No Papers Uploaded</p>
+                    <p class="text-xs mt-1">Upload PDFs to start your research.</p>
+                </div>
+                <!-- Document items injected here via JS -->
+            </div>
+
+            <!-- Stats -->
+            <div class="p-3 border-t border-gray-200 dark:border-darkborder bg-gray-50 dark:bg-[#181818] text-xs text-gray-500 dark:text-gray-400 flex justify-between">
+                <span id="stat-papers">0 Papers</span>
+                <span id="stat-pages">0 Pages</span>
+                <span id="stat-tokens">0 Words</span>
+            </div>
+        </aside>
+
+        <!-- CENTER PANEL: PDF Viewer / Mind Map Split -->
+        <section class="flex-1 flex flex-col min-w-[300px] bg-gray-100 dark:bg-black relative transition-colors shadow-[inset_0_0_10px_rgba(0,0,0,0.05)] dark:shadow-[inset_0_0_10px_rgba(0,0,0,0.5)]">
+            
+            <!-- Tab Controls at Top of Canvas -->
+            <div class="h-11 bg-white dark:bg-darkpanel border-b border-gray-200 dark:border-darkborder flex items-center justify-between px-4 z-10 shrink-0">
+                <div class="flex gap-1">
+                    <button id="tab-pdf" class="px-3 py-1 text-xs font-semibold rounded-md bg-brand text-white border border-brand transition-all flex items-center gap-1.5">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+                        PDF Document
+                    </button>
+                    <button id="tab-mindmap" class="px-3 py-1 text-xs font-semibold rounded-md bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 border border-transparent transition-all flex items-center gap-1.5">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M3 12h6M15 12h6M12 3v6M12 15v6"></path></svg>
+                        Interactive Mind Map
+                    </button>
+                </div>
+                <div class="flex items-center gap-2">
+                    <button id="generate-mindmap-btn" class="bg-brand text-white text-xs font-medium px-3 py-1 rounded hover:bg-brand-dark transition-colors flex items-center gap-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                        Map Current Paper
+                    </button>
+                </div>
+            </div>
+
+            <!-- VIEW 1: PDF Viewer Panel -->
+            <div id="pdf-view-wrapper" class="flex-1 flex flex-col relative w-full h-full overflow-hidden">
+                <!-- Viewer Toolbar -->
+                <div class="h-10 bg-white/80 dark:bg-darkpanel/80 backdrop-blur-sm border-b border-gray-200 dark:border-darkborder flex items-center justify-between px-4 absolute top-0 w-full z-10 transition-colors">
+                    <div class="text-xs font-medium text-gray-700 dark:text-gray-200 truncate w-1/3" id="pdf-title">Viewer</div>
+                    
+                    <div class="flex items-center gap-4">
+                        <div class="flex items-center bg-gray-100 dark:bg-black rounded border border-gray-200 dark:border-darkborder p-0.5">
+                            <button id="pdf-prev" class="p-1 hover:bg-gray-200 dark:hover:bg-gray-800 rounded transition-colors text-gray-600 dark:text-gray-400 disabled:opacity-30"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg></button>
+                            <span class="text-xs font-mono px-2 text-gray-600 dark:text-gray-400"><span id="page-num">0</span> / <span id="page-count">0</span></span>
+                            <button id="pdf-next" class="p-1 hover:bg-gray-200 dark:hover:bg-gray-800 rounded transition-colors text-gray-600 dark:text-gray-400 disabled:opacity-30"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg></button>
+                        </div>
+                        <div class="flex items-center gap-1 border border-gray-200 dark:border-darkborder rounded p-0.5 bg-gray-100 dark:bg-black">
+                            <button id="pdf-zoom-out" class="p-1 hover:bg-gray-200 dark:hover:bg-gray-800 rounded text-gray-600 dark:text-gray-400"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>
+                            <span id="pdf-zoom-val" class="text-xs font-mono w-10 text-center text-gray-600 dark:text-gray-400">100%</span>
+                            <button id="pdf-zoom-in" class="p-1 hover:bg-gray-200 dark:hover:bg-gray-800 rounded text-gray-600 dark:text-gray-400"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg></button>
+                        </div>
+                    </div>
+                    <div class="w-1/3"></div> <!-- Spacer for flex layout -->
+                </div>
+
+                <!-- Canvas Container -->
+                <div id="pdf-canvas-container" class="pt-10 relative">
+                    <div id="pdf-placeholder" class="absolute inset-0 flex flex-col items-center justify-center text-gray-400 pointer-events-none pt-10">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="mb-4 opacity-30"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                        <p class="font-serif text-lg">Document Canvas</p>
+                    </div>
+                    <canvas id="pdf-render" class="hidden"></canvas>
+                </div>
+            </div>
+
+            <!-- VIEW 2: Interactive Mind Map Panel -->
+            <div id="mindmap-view-wrapper" class="flex-1 hidden relative w-full h-full overflow-hidden bg-gray-50 dark:bg-darkbg">
+                <!-- Instruction Panel -->
+                <div class="absolute top-2 left-2 z-10 bg-white/90 dark:bg-darkpanel/90 backdrop-blur-sm border border-gray-200 dark:border-darkborder p-2.5 rounded-lg shadow-md max-w-xs text-xs pointer-events-none transition-opacity duration-300">
+                    <p class="font-bold text-gray-700 dark:text-gray-200 mb-1 flex items-center gap-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                        Mind Map Controls:
+                    </p>
+                    <ul class="list-disc pl-3 text-gray-500 dark:text-gray-400 space-y-0.5">
+                        <li><strong>Drag Canvas</strong> to Pan</li>
+                        <li><strong>Scroll Wheel</strong> to Zoom In/Out</li>
+                        <li><strong>Click Node</strong> to have the Agent explain it!</li>
+                    </ul>
+                </div>
+
+                <div id="mindmap-empty-state" class="absolute inset-0 flex flex-col items-center justify-center text-center p-6 bg-gray-50 dark:bg-darkbg transition-all">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" class="text-gray-400 mb-3"><circle cx="12" cy="12" r="3"></circle><path d="M3 12h6M15 12h6M12 3v6M12 15v6"></path></svg>
+                    <p class="font-serif text-base text-gray-700 dark:text-gray-300">No Mind Map Generated</p>
+                    <p class="text-xs text-gray-500 mt-1 max-w-sm">Select a research paper, then click <strong>"Map Current Paper"</strong> in the top right to analyze and generate an interactive concept diagram.</p>
+                </div>
+
+                <div id="mindmap-loading" class="hidden absolute inset-0 bg-white/70 dark:bg-black/70 flex flex-col items-center justify-center z-20">
+                    <div class="typing-indicator mb-3"><span></span><span></span><span></span></div>
+                    <p class="text-sm font-semibold text-brand dark:text-brand-light">Analyzing Paper & Structuring Map...</p>
+                </div>
+
+                <!-- SVG Interactive Mind Map Container -->
+                <svg id="mindmap-svg" class="w-full h-full block bg-gray-50 dark:bg-[#0c0c0c]" xmlns="http://www.w3.org/2000/svg">
+                    <g id="mindmap-viewport">
+                        <g id="mindmap-links"></g>
+                        <g id="mindmap-nodes"></g>
+                    </g>
+                </svg>
+            </div>
+        </section>
+
+        <!-- RIGHT PANEL: Agentic Chat Interface -->
+        <aside class="w-[420px] bg-white dark:bg-darkpanel border-l border-gray-200 dark:border-darkborder flex flex-col shrink-0 transition-colors z-10 shadow-lg">
+            
+            <!-- Chat Header -->
+            <div class="h-14 border-b border-gray-200 dark:border-darkborder flex items-center justify-between px-4 bg-gray-50/50 dark:bg-[#181818] transition-colors shrink-0">
+                <div class="flex items-center gap-2">
+                    <div class="relative">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-brand"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                        <span class="absolute -top-1 -right-1 flex h-2 w-2">
+                            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-light opacity-75"></span>
+                            <span class="relative inline-flex rounded-full h-2 w-2 bg-brand"></span>
+                        </span>
+                    </div>
+                    <div>
+                        <h2 class="text-sm font-bold text-gray-800 dark:text-gray-200">PaperMind Agent</h2>
+                        <span class="text-[9px] text-green-600 dark:text-green-400 font-semibold tracking-wider uppercase flex items-center gap-1">
+                            <span class="w-1 h-1 rounded-full bg-green-500"></span> Autonomous Agent Mode Active
+                        </span>
+                    </div>
+                </div>
+                <div class="flex gap-2">
+                    <button id="export-chat" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors p-1" title="Export Chat Session">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                    </button>
+                    <button id="clear-chat" class="text-gray-400 hover:text-red-500 transition-colors p-1" title="Clear Conversation History">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Quick Actions Banner -->
+            <div class="bg-gray-100 dark:bg-black border-b border-gray-200 dark:border-darkborder p-2 overflow-x-auto whitespace-nowrap scrollbar-hide shrink-0 flex gap-2" id="quick-actions">
+                <button class="quick-action-btn px-3 py-1.5 bg-white dark:bg-darkpanel border border-gray-200 dark:border-darkborder rounded-full text-xs text-gray-600 dark:text-gray-300 hover:border-brand hover:text-brand dark:hover:border-brand dark:hover:text-brand-light transition-colors" data-prompt="Initiate deep synthesis: Summarize the key claims, methodologies, and evidence across all uploaded papers. Highlight conflicts or gaps.">Summarize Papers</button>
+                <button class="quick-action-btn px-3 py-1.5 bg-white dark:bg-darkpanel border border-gray-200 dark:border-darkborder rounded-full text-xs text-gray-600 dark:text-gray-300 hover:border-brand hover:text-brand transition-colors" data-prompt="Analyze the methodology differences across the uploaded literature. Compare datasets, assumptions, and validation metrics used.">Compare Methods</button>
+                <button class="quick-action-btn px-3 py-1.5 bg-white dark:bg-darkpanel border border-gray-200 dark:border-darkborder rounded-full text-xs text-gray-600 dark:text-gray-300 hover:border-brand hover:text-brand transition-colors" data-prompt="Examine the current research. Generate 3 specific, highly innovative research hypotheses that address the limitations of these papers.">Generate Hypotheses</button>
+            </div>
+            
+            <!-- Chat Messages Container -->
+            <div id="chat-container" class="flex-1 overflow-y-auto p-4 flex flex-col gap-5 scroll-smooth">
+                <!-- Welcome Message -->
+                <div class="flex flex-col gap-1 items-start w-full">
+                    <div class="bg-white dark:bg-darkpanel border border-gray-200 dark:border-darkborder text-gray-800 dark:text-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 text-sm max-w-[92%] shadow-sm prose dark:prose-invert">
+                        <p>Hello! I am your **PaperMind Agentic Assistant**.</p>
+                        <p>I have built-in autonomous planning and conceptual extraction capabilities. You can ask me to deep-dive across your documents, or switch to the **Interactive Mind Map** tab to visualize the research visually!</p>
+                        <p class="text-xs text-gray-500 mt-2">💡 <em>Tip: Clicking on a node in the generated mind map will prompt me to do a targeted analytical deep-dive on that node!</em></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat Input Area -->
+            <div class="p-3 border-t border-gray-200 dark:border-darkborder bg-gray-50 dark:bg-[#181818] shrink-0">
+                <div class="relative flex items-end gap-2 bg-white dark:bg-darkpanel border border-gray-300 dark:border-darkborder rounded-xl p-1 shadow-sm focus-within:ring-2 focus-within:ring-brand/50 focus-within:border-brand transition-all">
+                    <textarea 
+                        id="chat-input" 
+                        rows="1" 
+                        class="w-full bg-transparent border-none outline-none px-3 py-2 text-sm text-gray-800 dark:text-gray-200 resize-none max-h-32"
+                        placeholder="Instruct the research agent..."
+                    ></textarea>
+                    <button 
+                        id="send-btn"
+                        class="bg-brand hover:bg-brand-dark text-white rounded-lg p-2 h-[36px] w-[36px] flex items-center justify-center transition-colors shrink-0 mb-0.5 mr-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
+                        title="Send Message"
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                    </button>
+                </div>
+                <div class="flex justify-between items-center mt-2 px-1 text-[10px] text-gray-500 dark:text-gray-400">
+                    <span>Using agent engine: <strong>gemini-2.5-flash</strong></span>
+                    <span id="char-count">0 / 8000</span>
+                </div>
+            </div>
+        </aside>
+
+    </main>
+
+    <script>
+        /**
+         * PaperMind - Agentic AI Research Engine & SVG Mindmapper
+         */
+
+        // --- Config & State ---
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        
+        const state = {
+            apiKey: localStorage.getItem('papermind_api_key') || '',
+            apiStatus: 'disconnected', 
+            documents: [], // { id, name, file, url, pdfDoc, totalPages, extractedText, wordCount }
+            currentDocId: null,
+            chatHistory: [],
+            theme: localStorage.getItem('papermind_theme') || 'light',
+            
+            // PDF Viewer State
+            pageNum: 1,
+            pageRendering: false,
+            pageNumPending: null,
+            scale: 1.2,
+            canvas: document.getElementById('pdf-render'),
+            ctx: document.getElementById('pdf-render').getContext('2d'),
+
+            // Interactive Mind Map State
+            mindmapData: null,
+            mindmapPanZoom: { x: 0, y: 0, zoom: 1 },
+            isDraggingMindmap: false,
+            dragStart: { x: 0, y: 0 }
+        };
+
+        // --- DOM Elements ---
+        const elements = {
+            themeToggle: document.getElementById('theme-toggle'),
+            iconSun: document.getElementById('icon-sun'),
+            iconMoon: document.getElementById('icon-moon'),
+            apiKeyInput: document.getElementById('api-key-input'),
+            connectApiBtn: document.getElementById('connect-api-btn'),
+            apiIndicator: document.getElementById('api-indicator'),
+            apiStatusText: document.getElementById('api-status-text'),
+            
+            fileUpload: document.getElementById('file-upload'),
+            uploadBtn: document.getElementById('upload-btn'),
+            docSearch: document.getElementById('doc-search'),
+            documentList: document.getElementById('document-list'),
+            emptyDocsState: document.getElementById('empty-docs-state'),
+            
+            statPapers: document.getElementById('stat-papers'),
+            statPages: document.getElementById('stat-pages'),
+            statTokens: document.getElementById('stat-tokens'),
+            
+            pdfTitle: document.getElementById('pdf-title'),
+            pdfPlaceholder: document.getElementById('pdf-placeholder'),
+            pdfCanvas: document.getElementById('pdf-render'),
+            btnPrev: document.getElementById('pdf-prev'),
+            btnNext: document.getElementById('pdf-next'),
+            btnZoomIn: document.getElementById('pdf-zoom-in'),
+            btnZoomOut: document.getElementById('pdf-zoom-out'),
+            pageNumDisplay: document.getElementById('page-num'),
+            pageCountDisplay: document.getElementById('page-count'),
+            zoomValDisplay: document.getElementById('pdf-zoom-val'),
+            
+            chatContainer: document.getElementById('chat-container'),
+            chatInput: document.getElementById('chat-input'),
+            sendBtn: document.getElementById('send-btn'),
+            charCount: document.getElementById('char-count'),
+            quickActions: document.querySelectorAll('.quick-action-btn'),
+            exportChatBtn: document.getElementById('export-chat'),
+            clearChatBtn: document.getElementById('clear-chat'),
+            toastContainer: document.getElementById('toast-container'),
+
+            // New Elements for Mind Map & Tab View
+            tabPdf: document.getElementById('tab-pdf'),
+            tabMindmap: document.getElementById('tab-mindmap'),
+            pdfViewWrapper: document.getElementById('pdf-view-wrapper'),
+            mindmapViewWrapper: document.getElementById('mindmap-view-wrapper'),
+            generateMindmapBtn: document.getElementById('generate-mindmap-btn'),
+            mindmapEmptyState: document.getElementById('mindmap-empty-state'),
+            mindmapLoading: document.getElementById('mindmap-loading'),
+            mindmapSvg: document.getElementById('mindmap-svg'),
+            mindmapViewport: document.getElementById('mindmap-viewport'),
+            mindmapNodes: document.getElementById('mindmap-nodes'),
+            mindmapLinks: document.getElementById('mindmap-links')
+        };
+
+        // Initialize marked.js
+        marked.setOptions({ breaks: true, gfm: true });
+
+        // --- Initialization ---
+        function init() {
+            // Theme Setup
+            if (state.theme === 'dark' || (!('papermind_theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                document.documentElement.classList.add('dark');
+                elements.iconSun.classList.remove('hidden');
+                elements.iconMoon.classList.add('hidden');
+                state.theme = 'dark';
+            }
+            
+            if (state.apiKey) {
+                elements.apiKeyInput.value = state.apiKey;
+                verifyApiKey(state.apiKey);
+            }
+
+            attachEventListeners();
+            initMindmapControls();
+        }
+
+        function attachEventListeners() {
+            // Theme Toggle
+            elements.themeToggle.addEventListener('click', toggleTheme);
+            
+            // API Key Connect
+            elements.connectApiBtn.addEventListener('click', () => {
+                const key = elements.apiKeyInput.value.trim();
+                if(key) verifyApiKey(key);
+                else showToast("Please enter an API key", "error");
+            });
+            
+            // Document Management
+            elements.uploadBtn.addEventListener('click', () => elements.fileUpload.click());
+            elements.fileUpload.addEventListener('change', handleFiles);
+            elements.docSearch.addEventListener('input', renderDocumentList);
+            
+            // PDF Controls
+            elements.btnPrev.addEventListener('click', onPrevPage);
+            elements.btnNext.addEventListener('click', onNextPage);
+            elements.btnZoomIn.addEventListener('click', () => { state.scale += 0.2; updateZoom(); queueRenderPage(state.pageNum); });
+            elements.btnZoomOut.addEventListener('click', () => { if(state.scale > 0.4) { state.scale -= 0.2; updateZoom(); queueRenderPage(state.pageNum); }});
+            
+            // Chat Interactions
+            elements.chatInput.addEventListener('input', handleChatInputResize);
+            elements.chatInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                }
+            });
+            elements.sendBtn.addEventListener('click', handleSend);
+            elements.exportChatBtn.addEventListener('click', exportChat);
+            elements.clearChatBtn.addEventListener('click', clearChat);
+            
+            // Quick Actions
+            elements.quickActions.forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    elements.chatInput.value = e.target.dataset.prompt;
+                    handleChatInputResize();
+                    elements.chatInput.focus();
+                });
+            });
+
+            // Tab Navigation
+            elements.tabPdf.addEventListener('click', () => switchTab('pdf'));
+            elements.tabMindmap.addEventListener('click', () => switchTab('mindmap'));
+
+            // Mind Map Generation
+            elements.generateMindmapBtn.addEventListener('click', generateMindMapForCurrentDoc);
+        }
+
+        // --- Theme & UI Utils ---
+        function toggleTheme() {
+            const isDark = document.documentElement.classList.toggle('dark');
+            state.theme = isDark ? 'dark' : 'light';
+            localStorage.setItem('papermind_theme', state.theme);
+            elements.iconSun.classList.toggle('hidden');
+            elements.iconMoon.classList.toggle('hidden');
+            if (state.mindmapData) {
+                renderMindmapSVG(state.mindmapData); // Re-render to adapt styles
+            }
+        }
+
+        function showToast(message, type = 'info') {
+            const toast = document.createElement('div');
+            const colorClass = type === 'error' ? 'bg-red-500' : type === 'success' ? 'bg-green-500' : 'bg-gray-800 dark:bg-gray-700';
+            toast.className = `toast ${colorClass}`;
+            toast.innerText = message;
+            elements.toastContainer.appendChild(toast);
+            
+            setTimeout(() => {
+                toast.classList.add('hide');
+                toast.addEventListener('animationend', () => toast.remove());
+            }, 3000);
+        }
+
+        // --- Tab Switching ---
+        function switchTab(target) {
+            if (target === 'pdf') {
+                elements.tabPdf.className = "px-3 py-1 text-xs font-semibold rounded-md bg-brand text-white border border-brand transition-all flex items-center gap-1.5";
+                elements.tabMindmap.className = "px-3 py-1 text-xs font-semibold rounded-md bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 border border-transparent transition-all flex items-center gap-1.5";
+                
+                elements.pdfViewWrapper.classList.remove('hidden');
+                elements.mindmapViewWrapper.classList.add('hidden');
+            } else {
+                elements.tabMindmap.className = "px-3 py-1 text-xs font-semibold rounded-md bg-brand text-white border border-brand transition-all flex items-center gap-1.5";
+                elements.tabPdf.className = "px-3 py-1 text-xs font-semibold rounded-md bg-transparent text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 border border-transparent transition-all flex items-center gap-1.5";
+                
+                elements.pdfViewWrapper.classList.add('hidden');
+                elements.mindmapViewWrapper.classList.remove('hidden');
+                
+                // Recenter mindmap on open
+                if (state.mindmapData) {
+                    setTimeout(centerMindmapViewport, 50);
+                }
+            }
+        }
+
+        // --- API Validation ---
+        async function verifyApiKey(key) {
+            setApiStatus('connecting');
+            try {
+                const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`);
+                if (res.ok) {
+                    state.apiKey = key;
+                    localStorage.setItem('papermind_api_key', key);
+                    setApiStatus('connected');
+                    showToast("API Connected Successfully", "success");
+                } else {
+                    setApiStatus('disconnected');
+                    showToast("Invalid API Key", "error");
+                }
+            } catch (err) {
+                setApiStatus('disconnected');
+                showToast("Network Error verifying API", "error");
+            }
+        }
+
+        function setApiStatus(status) {
+            state.apiStatus = status;
+            elements.apiIndicator.className = 'w-2.5 h-2.5 rounded-full shadow-[inset_0_1px_2px_rgba(0,0,0,0.3)] transition-colors duration-300 ';
+            if (status === 'disconnected') {
+                elements.apiIndicator.classList.add('bg-red-500');
+                elements.apiStatusText.innerText = 'Disconnected';
+                elements.apiStatusText.className = 'text-xs font-semibold text-gray-600 dark:text-gray-400 w-20 text-center';
+            } else if (status === 'connecting') {
+                elements.apiIndicator.classList.add('bg-yellow-500', 'animate-pulse');
+                elements.apiStatusText.innerText = 'Connecting...';
+                elements.apiStatusText.className = 'text-xs font-semibold text-yellow-600 dark:text-yellow-500 w-20 text-center';
+            } else if (status === 'connected') {
+                elements.apiIndicator.classList.add('bg-green-500');
+                elements.apiStatusText.innerText = 'Connected';
+                elements.apiStatusText.className = 'text-xs font-semibold text-green-600 dark:text-green-500 w-20 text-center';
+            }
+        }
+
+        // --- Document Processing (Client-Side) ---
+        async function handleFiles(e) {
+            const files = Array.from(e.target.files);
+            if (files.length === 0) return;
+
+            showToast(`Processing ${files.length} document(s)...`);
+            
+            for (const file of files) {
+                if (file.type !== 'application/pdf') {
+                    showToast(`${file.name} is not a PDF`, 'error');
+                    continue;
+                }
+                
+                const id = 'doc_' + Math.random().toString(36).substr(2, 9);
+                const url = URL.createObjectURL(file);
+                
+                try {
+                    // Load via PDF.js
+                    const loadingTask = pdfjsLib.getDocument(url);
+                    const pdfDoc = await loadingTask.promise;
+                    const totalPages = pdfDoc.numPages;
+                    
+                    // Extract text for RAG
+                    let extractedText = '';
+                    let wordCount = 0;
+                    
+                    for (let i = 1; i <= totalPages; i++) {
+                        const page = await pdfDoc.getPage(i);
+                        const textContent = await page.getTextContent();
+                        const pageText = textContent.items.map(item => item.str).join(' ');
+                        extractedText += `\n--- Page ${i} ---\n` + pageText;
+                        wordCount += pageText.split(/\s+/).length;
+                    }
+
+                    const docObj = {
+                        id, name: file.name, file, url, pdfDoc, totalPages, extractedText, wordCount
+                    };
+                    
+                    state.documents.push(docObj);
+                    if (!state.currentDocId) selectDocument(id);
+                    
+                } catch (error) {
+                    console.error("Error parsing PDF:", error);
+                    showToast(`Failed to parse ${file.name}`, 'error');
+                }
+            }
+            
+            e.target.value = ''; // reset input
+            renderDocumentList();
+            updateStats();
+            showToast("Documents processed successfully", "success");
+        }
+
+        function renderDocumentList() {
+            const searchTerm = elements.docSearch.value.toLowerCase();
+            elements.documentList.innerHTML = '';
+            
+            const filteredDocs = state.documents.filter(d => d.name.toLowerCase().includes(searchTerm));
+            
+            if (state.documents.length === 0) {
+                elements.documentList.appendChild(elements.emptyDocsState);
+                elements.emptyDocsState.style.display = 'flex';
+                return;
+            } else {
+                elements.emptyDocsState.style.display = 'none';
+            }
+            
+            filteredDocs.forEach(doc => {
+                const isActive = doc.id === state.currentDocId;
+                
+                const div = document.createElement('div');
+                div.className = `group flex items-center justify-between p-2.5 mb-1.5 rounded-lg cursor-pointer border transition-all text-sm ${
+                    isActive 
+                    ? 'bg-brand/10 border-brand/30 dark:bg-brand/20 dark:border-brand/50' 
+                    : 'bg-white dark:bg-darkpanel border-transparent hover:border-gray-200 dark:hover:border-darkborder hover:shadow-sm'
+                }`;
+                div.onclick = () => selectDocument(doc.id);
+                
+                const iconColor = isActive ? 'text-brand dark:text-brand-light' : 'text-gray-400';
+                const textColor = isActive ? 'text-brand dark:text-brand-light font-medium' : 'text-gray-700 dark:text-gray-300';
+                
+                div.innerHTML = `
+                    <div class="flex items-center gap-3 overflow-hidden">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="${iconColor} shrink-0"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line><polyline points="10 9 9 9 8 9"></polyline></svg>
+                        <span class="${textColor} truncate" title="${doc.name}">${doc.name}</span>
+                    </div>
+                    <button class="delete-btn opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 transition-all rounded hover:bg-red-50 dark:hover:bg-red-900/30" title="Remove Document">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                    </button>
+                `;
+                
+                div.querySelector('.delete-btn').onclick = (e) => {
+                    e.stopPropagation();
+                    deleteDocument(doc.id);
+                };
+                
+                elements.documentList.appendChild(div);
+            });
+        }
+
+        function updateStats() {
+            const totalDocs = state.documents.length;
+            const totalPages = state.documents.reduce((acc, doc) => acc + doc.totalPages, 0);
+            const totalWords = state.documents.reduce((acc, doc) => acc + doc.wordCount, 0);
+            
+            elements.statPapers.innerText = `${totalDocs} Paper${totalDocs !== 1 ? 's' : ''}`;
+            elements.statPages.innerText = `${totalPages} Page${totalPages !== 1 ? 's' : ''}`;
+            elements.statTokens.innerText = `${(totalWords/1000).toFixed(1)}k Words`;
+        }
+
+        function deleteDocument(id) {
+            const idx = state.documents.findIndex(d => d.id === id);
+            if (idx > -1) {
+                URL.revokeObjectURL(state.documents[idx].url);
+                state.documents.splice(idx, 1);
+                
+                if (state.currentDocId === id) {
+                    if (state.documents.length > 0) selectDocument(state.documents[0].id);
+                    else {
+                        state.currentDocId = null;
+                        elements.pdfPlaceholder.classList.remove('hidden');
+                        elements.pdfCanvas.classList.add('hidden');
+                        elements.pdfTitle.innerText = 'Viewer';
+                        elements.pageCountDisplay.innerText = '0';
+                        elements.pageNumDisplay.innerText = '0';
+                    }
+                }
+                renderDocumentList();
+                updateStats();
+            }
+        }
+
+        // --- PDF Rendering Engine ---
+        function selectDocument(id) {
+            state.currentDocId = id;
+            state.pageNum = 1;
+            renderDocumentList();
+            
+            const doc = state.documents.find(d => d.id === id);
+            if(doc) {
+                elements.pdfPlaceholder.classList.add('hidden');
+                elements.pdfCanvas.classList.remove('hidden');
+                elements.pdfTitle.innerText = doc.name;
+                elements.pageCountDisplay.innerText = doc.totalPages;
+                updateZoom();
+                queueRenderPage(state.pageNum);
+            }
+        }
+
+        function renderPage(num) {
+            state.pageRendering = true;
+            const doc = state.documents.find(d => d.id === state.currentDocId);
+            if (!doc || !doc.pdfDoc) return;
+
+            doc.pdfDoc.getPage(num).then(page => {
+                const viewport = page.getViewport({ scale: state.scale });
+                elements.pdfCanvas.height = viewport.height;
+                elements.pdfCanvas.width = viewport.width;
+
+                const renderContext = {
+                    canvasContext: state.ctx,
+                    viewport: viewport
+                };
+
+                const renderTask = page.render(renderContext);
+
+                renderTask.promise.then(() => {
+                    state.pageRendering = false;
+                    if (state.pageNumPending !== null) {
+                        renderPage(state.pageNumPending);
+                        state.pageNumPending = null;
+                    }
+                });
+            });
+
+            elements.pageNumDisplay.innerText = num;
+            elements.btnPrev.disabled = num <= 1;
+            elements.btnNext.disabled = num >= doc.totalPages;
+        }
+
+        function queueRenderPage(num) {
+            if (state.pageRendering) {
+                state.pageNumPending = num;
+            } else {
+                renderPage(num);
+            }
+        }
+
+        function onPrevPage() {
+            if (state.pageNum <= 1) return;
+            state.pageNum--;
+            queueRenderPage(state.pageNum);
+        }
+
+        function onNextPage() {
+            const doc = state.documents.find(d => d.id === state.currentDocId);
+            if (!doc || state.pageNum >= doc.totalPages) return;
+            state.pageNum++;
+            queueRenderPage(state.pageNum);
+        }
+
+        function updateZoom() {
+            elements.zoomValDisplay.innerText = Math.round(state.scale * 100) + '%';
+        }
+
+        // --- Interactive Mind Map SVG Engine ---
+        function initMindmapControls() {
+            const svg = elements.mindmapSvg;
+
+            // Pan and Zoom logic on SVG Container
+            svg.addEventListener('mousedown', (e) => {
+                state.isDraggingMindmap = true;
+                state.dragStart.x = e.clientX - state.mindmapPanZoom.x;
+                state.dragStart.y = e.clientY - state.mindmapPanZoom.y;
+            });
+
+            window.addEventListener('mousemove', (e) => {
+                if (!state.isDraggingMindmap) return;
+                state.mindmapPanZoom.x = e.clientX - state.dragStart.x;
+                state.mindmapPanZoom.y = e.clientY - state.dragStart.y;
+                updateMindmapViewportTransform();
+            });
+
+            window.addEventListener('mouseup', () => {
+                state.isDraggingMindmap = false;
+            });
+
+            svg.addEventListener('wheel', (e) => {
+                e.preventDefault();
+                const zoomFactor = 1.1;
+                const rect = svg.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
+
+                const beforeZoomX = (mouseX - state.mindmapPanZoom.x) / state.mindmapPanZoom.zoom;
+                const beforeZoomY = (mouseY - state.mindmapPanZoom.y) / state.mindmapPanZoom.zoom;
+
+                if (e.deltaY < 0) {
+                    state.mindmapPanZoom.zoom *= zoomFactor;
+                } else {
+                    state.mindmapPanZoom.zoom /= zoomFactor;
+                }
+
+                // Bound Zoom
+                state.mindmapPanZoom.zoom = Math.max(0.2, Math.min(state.mindmapPanZoom.zoom, 4));
+
+                state.mindmapPanZoom.x = mouseX - beforeZoomX * state.mindmapPanZoom.zoom;
+                state.mindmapPanZoom.y = mouseY - beforeZoomY * state.mindmapPanZoom.zoom;
+
+                updateMindmapViewportTransform();
+            });
+        }
+
+        function updateMindmapViewportTransform() {
+            elements.mindmapViewport.setAttribute(
+                'transform', 
+                `translate(${state.mindmapPanZoom.x}, ${state.mindmapPanZoom.y}) scale(${state.mindmapPanZoom.zoom})`
+            );
+        }
+
+        function centerMindmapViewport() {
+            const rect = elements.mindmapSvg.getBoundingClientRect();
+            // Default center is SVG Center
+            state.mindmapPanZoom.x = rect.width / 2;
+            state.mindmapPanZoom.y = rect.height / 2;
+            state.mindmapPanZoom.zoom = 1.0;
+            updateMindmapViewportTransform();
+        }
+
+        async function generateMindMapForCurrentDoc() {
+            if (state.apiStatus !== 'connected') {
+                showToast("Please connect a valid Gemini API key first.", "error");
+                elements.apiKeyInput.focus();
+                return;
+            }
+
+            if (!state.currentDocId) {
+                showToast("Please select/upload a document first.", "error");
+                return;
+            }
+
+            switchTab('mindmap');
+            elements.mindmapEmptyState.classList.add('hidden');
+            elements.mindmapLoading.classList.remove('hidden');
+
+            const currentDoc = state.documents.find(d => d.id === state.currentDocId);
+
+            try {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${state.apiKey}`;
+                
+                const mindMapPrompt = `You are a structured research visualizer. Analyze the provided research paper and construct an elaborate, conceptual mind map of its main insights.
+Provide a structured JSON output of the core components:
+- centralNode: The name of the paper (keep it under 30 chars or truncated nicely)
+- branches: An array of primary concepts (4-6 branches). Each branch must have:
+  - title: The branch theme (e.g. Methodology, Findings, Literature Gap, Datasets)
+  - subNodes: An array of specific details/keywords (3-5 items) belonging to that branch.
+
+You must reply with STRICT JSON. No markdown code blocks, just raw JSON.
+Format specification:
+{
+  "centralNode": "Title",
+  "branches": [
+    {
+      "title": "Methodology",
+      "subNodes": ["Transformer", "Attention mechanism", "Linear Scalability"]
+    }
+  ]
+}
+
+Extracted Text:
+${currentDoc.extractedText.slice(0, 100000)}  // Send up to 100k chars for fast processing
+`;
+
+                const payload = {
+                    contents: [{
+                        role: "user",
+                        parts: [{ text: mindMapPrompt }]
+                    }],
+                    generationConfig: {
+                        responseMimeType: "application/json",
+                        temperature: 0.1
+                    }
+                };
+
+                const response = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error?.message || "Parsing failed");
+
+                const jsonStr = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                const parsedMap = JSON.parse(jsonStr);
+
+                state.mindmapData = parsedMap;
+                renderMindmapSVG(parsedMap);
+                centerMindmapViewport();
+
+                showToast("Concept Map generated successfully!", "success");
+            } catch (err) {
+                console.error(err);
+                showToast("Failed to generate concept map: " + err.message, "error");
+                elements.mindmapEmptyState.classList.remove('hidden');
+            } finally {
+                elements.mindmapLoading.classList.add('hidden');
+            }
+        }
+
+        function renderMindmapSVG(data) {
+            elements.mindmapNodes.innerHTML = '';
+            elements.mindmapLinks.innerHTML = '';
+
+            const isDark = document.documentElement.classList.contains('dark');
+            const primaryColor = '#B31B1B';
+            const nodeTextColor = isDark ? '#E2E8F0' : '#1E293B';
+            const nodeBgColor = isDark ? '#1E1E1E' : '#FFFFFF';
+            const nodeBorderColor = isDark ? '#444444' : '#E2E8F0';
+            const branchColors = ['#2563EB', '#16A34A', '#D97706', '#7C3AED', '#DB2777', '#0891B2'];
+
+            // 1. Render Central Root Node (at 0, 0)
+            createSvgNode(0, 0, data.centralNode, primaryColor, '#FFFFFF', true, () => {
+                askAgentAboutNode(data.centralNode, "General Context");
+            });
+
+            // 2. Render Branches radially
+            const branchCount = data.branches.length;
+            const branchRadius = 220;
+            const subNodeRadius = 130;
+
+            data.branches.forEach((branch, index) => {
+                const angle = (index / branchCount) * 2 * Math.PI;
+                const bx = Math.round(Math.cos(angle) * branchRadius);
+                const by = Math.round(Math.sin(angle) * branchRadius);
+                const branchColor = branchColors[index % branchColors.length];
+
+                // Draw link from root to branch
+                createSvgLink(0, 0, bx, by, primaryColor, 2.5);
+
+                // Draw Branch Node
+                createSvgNode(bx, by, branch.title, branchColor, '#FFFFFF', false, () => {
+                    askAgentAboutNode(branch.title, `Branch Theme of ${data.centralNode}`);
+                });
+
+                // Render SubNodes for each branch
+                const subCount = branch.subNodes.length;
+                branch.subNodes.forEach((sub, subIndex) => {
+                    const subSpread = 0.8; // Spread of sub-nodes (in radians)
+                    const baseAngle = angle;
+                    const spreadStart = baseAngle - subSpread / 2;
+                    const subAngle = spreadStart + (subIndex / Math.max(1, subCount - 1)) * subSpread;
+
+                    const sx = bx + Math.round(Math.cos(subAngle) * subNodeRadius);
+                    const sy = by + Math.round(Math.sin(subAngle) * subNodeRadius);
+
+                    // Link branch to subnode
+                    createSvgLink(bx, by, sx, sy, branchColor, 1.5, true);
+
+                    // Subnode
+                    createSvgNode(sx, sy, sub, nodeBgColor, nodeTextColor, false, () => {
+                        askAgentAboutNode(sub, `Concept details in ${branch.title}`);
+                    }, nodeBorderColor);
+                });
+            });
+        }
+
+        function createSvgNode(cx, cy, label, bgColor, textColor, isRoot, onClick, strokeColor) {
+            const group = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+            group.setAttribute('transform', `translate(${cx}, ${cy})`);
+            group.setAttribute('class', 'mindmap-node');
+            
+            // Truncate label for neat fitting
+            let displayLabel = label.length > 25 ? label.slice(0, 22) + '...' : label;
+
+            // Simple text bounding box estimation
+            const textLen = displayLabel.length;
+            const width = Math.max(100, textLen * 7.5 + 24);
+            const height = isRoot ? 40 : 34;
+
+            const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            rect.setAttribute('x', -width / 2);
+            rect.setAttribute('y', -height / 2);
+            rect.setAttribute('width', width);
+            rect.setAttribute('height', height);
+            rect.setAttribute('rx', isRoot ? '12' : '8');
+            rect.setAttribute('ry', isRoot ? '12' : '8');
+            rect.setAttribute('fill', bgColor);
+            rect.setAttribute('stroke', strokeColor || 'none');
+            rect.setAttribute('stroke-width', strokeColor ? '1.5' : '0');
+            rect.setAttribute('filter', 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))');
+
+            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            text.setAttribute('text-anchor', 'middle');
+            text.setAttribute('dominant-baseline', 'middle');
+            text.setAttribute('fill', textColor);
+            text.setAttribute('font-size', isRoot ? '11px' : '10px');
+            text.setAttribute('font-weight', '600');
+            text.setAttribute('font-family', 'sans-serif');
+            text.textContent = displayLabel;
+
+            group.appendChild(rect);
+            group.appendChild(text);
+
+            if (onClick) {
+                group.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    onClick();
+                });
+            }
+
+            elements.mindmapNodes.appendChild(group);
+        }
+
+        function createSvgLink(x1, y1, x2, y2, color, width, isDashed = false) {
+            const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', x1);
+            line.setAttribute('y1', y1);
+            line.setAttribute('x2', x2);
+            line.setAttribute('y2', y2);
+            line.setAttribute('stroke', color);
+            line.setAttribute('stroke-width', width);
+            if (isDashed) {
+                line.setAttribute('stroke-dasharray', '4,4');
+            }
+            elements.mindmapLinks.appendChild(line);
+        }
+
+        function askAgentAboutNode(nodeName, context) {
+            elements.chatInput.value = `Focus analytical synthesis on the concept node: "${nodeName}" (Context: ${context}). What are the key takeaways, relevance, and details related to this in the context of the uploaded research paper?`;
+            handleChatInputResize();
+            elements.chatInput.focus();
+            showToast(`Instructed PaperMind Agent to analyze: "${nodeName}"`);
+        }
+
+        // --- Chat Interface & Agentic RAG System ---
+        function handleChatInputResize() {
+            const el = elements.chatInput;
+            el.style.height = 'auto';
+            el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+            elements.charCount.innerText = `${el.value.length} / 8000`;
+            elements.sendBtn.disabled = el.value.trim().length === 0;
+        }
+
+        function createAgentMessageElement(role, content, thinkingTrace = '') {
+            const wrapper = document.createElement('div');
+            wrapper.className = `flex flex-col gap-1 w-full ${role === 'user' ? 'items-end' : 'items-start'}`;
+            
+            const header = document.createElement('div');
+            header.className = 'text-[10px] font-semibold text-gray-500 uppercase tracking-wider px-1 flex items-center justify-between w-full max-w-[92%]';
+            
+            if (role === 'user') {
+                header.innerHTML = `<span></span><span>You</span>`;
+            } else {
+                header.innerHTML = `
+                    <div class="flex items-center gap-1 text-brand dark:text-brand-light">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                        PaperMind Agent
+                    </div>
+                    <button class="copy-btn opacity-0 hover:opacity-100 transition-opacity p-0.5 text-gray-400 hover:text-gray-700 dark:hover:text-gray-200" title="Copy text">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                    </button>
+                `;
+            }
+
+            const bubble = document.createElement('div');
+            bubble.className = 'w-full max-w-[92%] flex flex-col gap-1.5';
+
+            // If we have an Agentic thinking trace, append a collapsible visualizer
+            if (thinkingTrace && role !== 'user') {
+                const traceContainer = document.createElement('details');
+                traceContainer.className = 'text-xs text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-black/40 border border-gray-200 dark:border-darkborder rounded-lg p-2.5 outline-none cursor-pointer hover:bg-gray-100/50 transition-colors mb-1.5';
+                traceContainer.innerHTML = `
+                    <summary class="font-bold flex items-center gap-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="animate-spin text-brand"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg>
+                        Agentic Thought Process
+                    </summary>
+                    <div class="mt-2 pl-3 border-l border-brand whitespace-pre-wrap font-mono text-[11px] leading-relaxed">${thinkingTrace}</div>
+                `;
+                bubble.appendChild(traceContainer);
+            }
+            
+            const messageBody = document.createElement('div');
+            if (role === 'user') {
+                messageBody.className = 'bg-brand text-white rounded-2xl rounded-tr-sm px-4 py-3 text-sm shadow-sm whitespace-pre-wrap leading-relaxed';
+                messageBody.innerText = content;
+            } else {
+                messageBody.className = 'bg-white dark:bg-darkpanel border border-gray-200 dark:border-darkborder text-gray-800 dark:text-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 text-sm shadow-sm prose dark:prose-invert';
+                if(content === 'loading') {
+                    messageBody.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>';
+                    messageBody.id = 'loading-bubble';
+                } else {
+                    messageBody.innerHTML = marked.parse(content);
+                }
+            }
+            
+            bubble.appendChild(messageBody);
+            wrapper.appendChild(header);
+            wrapper.appendChild(bubble);
+            elements.chatContainer.appendChild(wrapper);
+            scrollToBottom();
+
+            if (role !== 'user' && content !== 'loading') {
+                // Copy-to-clipboard activation
+                const btn = header.querySelector('.copy-btn');
+                if (btn) {
+                    wrapper.addEventListener('mouseenter', () => btn.classList.remove('opacity-0'));
+                    wrapper.addEventListener('mouseleave', () => btn.classList.add('opacity-0'));
+                    btn.onclick = () => {
+                        const textArea = document.createElement("textarea");
+                        textArea.value = content;
+                        document.body.appendChild(textArea);
+                        textArea.select();
+                        try {
+                            document.execCommand('copy');
+                            showToast("Copied to clipboard", "success");
+                        } catch (err) {
+                            showToast("Failed to copy", "error");
+                        }
+                        document.body.removeChild(textArea);
+                    };
+                }
+            }
+
+            return wrapper;
+        }
+
+        function scrollToBottom() {
+            elements.chatContainer.scrollTop = elements.chatContainer.scrollHeight;
+        }
+
+        async function handleSend() {
+            const text = elements.chatInput.value.trim();
+            if (!text) return;
+            
+            if (state.apiStatus !== 'connected') {
+                showToast("Please connect a valid Gemini API key first.", "error");
+                elements.apiKeyInput.focus();
+                return;
+            }
+
+            if (state.documents.length === 0) {
+                showToast("Please upload at least one PDF to analyze.", "error");
+                return;
+            }
+
+            // Update UI
+            elements.chatInput.value = '';
+            handleChatInputResize();
+            createAgentMessageElement('user', text);
+            createAgentMessageElement('model', 'loading');
+            elements.chatInput.disabled = true;
+            elements.sendBtn.disabled = true;
+
+            try {
+                const result = await generateAgenticRAGResponse(text);
+                
+                // Remove loading bubble
+                const loader = document.getElementById('loading-bubble');
+                if(loader) loader.parentElement.parentElement.remove();
+                
+                // Print response with its Agent thoughts
+                createAgentMessageElement('model', result.text, result.thinking);
+                
+                // Update History
+                state.chatHistory.push(
+                    { role: "user", parts: [{ text: text }] },
+                    { role: "model", parts: [{ text: result.text }] }
+                );
+
+            } catch (error) {
+                console.error("API Error:", error);
+                const loader = document.getElementById('loading-bubble');
+                if(loader) loader.parentElement.parentElement.remove();
+                createAgentMessageElement('model', `**Error:** ${error.message}\n\nPlease check your API key status and try again.`);
+            } finally {
+                elements.chatInput.disabled = false;
+                elements.sendBtn.disabled = false;
+                elements.chatInput.focus();
+            }
+        }
+
+        /**
+         * Agentic RAG Generation:
+         * Generates an autonomous research reasoning chain (Thought, Plan, Reflection) prior to giving the answers.
+         */
+        async function generateAgenticRAGResponse(query) {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${state.apiKey}`;
+
+            // Build Context
+            let documentContext = "--- SOURCE DOCUMENTS ---\n\n";
+            state.documents.forEach(doc => {
+                documentContext += `[Document ID/Name: ${doc.name}]\n`;
+                documentContext += `${doc.extractedText}\n\n`;
+                documentContext += `--- END OF ${doc.name} ---\n\n`;
+            });
+
+            const agentSystemPrompt = `You are the autonomous PaperMind Research Agent. Your workflow must simulate a deep-reasoning research pipeline.
+
+For every user query:
+1. Synthesize the provided context documents comprehensively.
+2. Build a structured research plan addressing exactly what resources and segments of the uploaded text you will focus on.
+3. Formulate a reasoning chain.
+
+OUTPUT FORMAT REQUIREMENTS:
+You MUST split your response into TWO distinct parts using the separator "===AGENT_THOUGHT_END===":
+- Part 1: Your exact step-by-step reasoning trace (Thought, Retrieval Plan, Fact-Checking). No markdown styling in this part, write it as a concise plain log.
+- Part 2: The final comprehensive response to the user with proper academic citations like [Document Name] in markdown.
+
+Example response:
+[Agent Thought Log]
+Plan: Scan document context for Transformers...
+Hypothesis: Concepts line up with Section 3...
+===AGENT_THOUGHT_END===
+### Final Summary
+Transformers are used to ...
+
+Provided context:
+${documentContext}
+`;
+
+            const payload = {
+                contents: [...state.chatHistory, {
+                    role: "user",
+                    parts: [{ text: query }]
+                }],
+                systemInstruction: {
+                    parts: [{ text: agentSystemPrompt }]
+                },
+                generationConfig: {
+                    temperature: 0.3
+                }
+            };
+
+            const response = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                throw new Error(data.error?.message || "Unknown API Error");
+            }
+
+            const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+            
+            // Extract Agentic trace & final output
+            let thinking = "Formulating research strategy...\nVerifying paper methodologies...\nCiting source references...";
+            let text = rawText;
+
+            if (rawText.includes("===AGENT_THOUGHT_END===")) {
+                const parts = rawText.split("===AGENT_THOUGHT_END===");
+                thinking = parts[0].trim();
+                text = parts[1].trim();
+            }
+
+            return { text, thinking };
+        }
+
+        // --- Utilities ---
+        function clearChat() {
+            if(confirm("Are you sure you want to clear the chat history?")) {
+                state.chatHistory = [];
+                elements.chatContainer.innerHTML = '';
+                
+                const wrapper = document.createElement('div');
+                wrapper.className = 'flex flex-col gap-1 items-start w-full';
+                wrapper.innerHTML = `
+                    <div class="bg-white dark:bg-darkpanel border border-gray-200 dark:border-darkborder text-gray-800 dark:text-gray-200 rounded-2xl rounded-tl-sm px-4 py-3 text-sm max-w-[92%] shadow-sm prose">
+                        <p>Chat session reset. Instruct me to analyze your literature assets or conceptualize them via the interactive mind mapper.</p>
+                    </div>
+                `;
+                elements.chatContainer.appendChild(wrapper);
+            }
+        }
+
+        function exportChat() {
+            if(state.chatHistory.length === 0) {
+                showToast("No chat history to export", "error");
+                return;
+            }
+            
+            let markdown = "# PaperMind Research Agent Session\n\n";
+            markdown += `*Date: ${new Date().toLocaleString()}*\n\n`;
+            markdown += `## Extracted Literature\n`;
+            state.documents.forEach(d => markdown += `- ${d.name} (${d.totalPages} pages)\n`);
+            markdown += `\n---\n\n`;
+
+            state.chatHistory.forEach(msg => {
+                const roleName = msg.role === 'user' ? '### You' : '### PaperMind Agent';
+                markdown += `${roleName}\n${msg.parts[0].text}\n\n`;
+            });
+
+            const blob = new Blob([markdown], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `PaperMind_Agent_Export_${new Date().getTime()}.md`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            showToast("Chat session exported as Markdown", "success");
+        }
+
+        // Run Init
+        document.addEventListener('DOMContentLoaded', init);
+
+    </script>
+</body>
+</html>
